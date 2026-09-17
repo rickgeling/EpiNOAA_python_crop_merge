@@ -51,6 +51,7 @@ def load_and_prepare_yield_data(csv_path: str) -> Optional[Tuple[pl.DataFrame, L
         if df_yield.height == 0:
             print("Error: No valid rows in CSV after dropping nulls in state, county, or year.")
             return None
+        #county needs 3 digits otherwise the fips dont match what nclimgrid uses
         df_yield = df_yield.with_columns(
             pl.col("county").str.zfill(3).alias("county_padded"),
             (pl.col("state") + pl.col("county").str.zfill(3)).alias("fips_full")
@@ -83,6 +84,7 @@ def fetch_and_clean_daily_weather_batched(
     start_date_str = f"{start_year}-01-01"
     end_date_str = f"{end_year}-12-31"
 
+    #pulls the whole state batch in one go, this is the slow part
     daily_arrow_table, file_load_errors = load_nclimgrid_data(
         start_date=start_date_str, end_date=end_date_str, spatial_scale='cty', 
         scaled=True, counties=fips_codes_batch, 
@@ -165,6 +167,7 @@ def calculate_daily_kdd(tmax_series: pl.Series) -> pl.Series:
     daily_kdd = pl.max_horizontal(pl.lit(0.0, dtype=pl.Float64), kdd_potential)
     return daily_kdd
 
+#hot and dry on the same day counts as 1, a null just counts as no
 def calculate_daily_chd(tmax_series: pl.Series, prcp_series: pl.Series) -> pl.Series:
     tmax_float = tmax_series.cast(pl.Float64, strict=False)
     prcp_float = prcp_series.cast(pl.Float64, strict=False)
@@ -212,15 +215,18 @@ def _calculate_seasonal_aggregates(df_season: pl.DataFrame, season_prefix: str) 
 
 def aggregate_weather_to_yearly(daily_df_for_year: pl.DataFrame, year: int) -> Dict[str, Any]:
     all_aggs: Dict[str, Any] = {"year": year} 
+    #growing season window first, 1 apr to 30 sep (see config)
     gs_start_date = pl.datetime(year, config.GS_START_MONTH, config.GS_START_DAY)
     gs_end_date = pl.datetime(year, config.GS_END_MONTH, config.GS_END_DAY)
     df_gs = daily_df_for_year.filter((pl.col("date") >= gs_start_date) & (pl.col("date") <= gs_end_date))
     gs_essential_cols = [col for col in config.TARGET_DAILY_WEATHER_VARIABLES if col != 'date']
     gs_essential_cols_present = all(col in df_gs.columns for col in gs_essential_cols)
+    #no days in the window or a variable missing, then the whole GS block is just nan
     if df_gs.height == 0 or not gs_essential_cols_present:
         gs_aggs = {f"GDD_GS": np.nan, f"KDD_GS": np.nan, f"TMAX_AVG_GS": np.nan, f"PREC_GS": np.nan, f"CHD_GS": np.nan}
     else: gs_aggs = _calculate_seasonal_aggregates(df_gs, "GS")
     all_aggs.update(gs_aggs)
+    #same again for the SGF window (jul 1 to aug 15), not used for the paper atm
     sgf_start_date = pl.datetime(year, config.SGF_START_MONTH, config.SGF_START_DAY)
     sgf_end_date = pl.datetime(year, config.SGF_END_MONTH, config.SGF_END_DAY)
     df_sgf = daily_df_for_year.filter((pl.col("date") >= sgf_start_date) & (pl.col("date") <= sgf_end_date))

@@ -74,8 +74,6 @@ At the root:
   September), GDD base 10 degrees C capped at 29, KDD above 29, concurrent
   hot-dry days above 30 degrees C with under 1 mm of rain.
 - `OLD/` is superseded files and earlier versions, kept rather than deleted.
-- `x_logbook/CHANGELOG.md` is a running log of every structural change and
-  the reasoning behind it. The `x_` prefix just keeps it sorted last.
 
 Every stage folder has its own README with the detail for that step. This
 one is the the map.
@@ -129,8 +127,13 @@ overwrite the paper's data. See `00_filter_east_100th_meridian/README.md`.
   as of August 2026.
 - 100th meridian: corn is done through 03b, 31 states and 1,859 counties.
   Soy hasn't started, the all-states raw export still needs downloading.
-- Stage 04 hasn't been rerun since the crop parameterisation, its only
-  output is from before that.
+- Stage 04: the growing-season comparison has been rerun for corn
+  (September 2026). Still to do: the same comparison for the 100th meridian
+  corn data (`df_yield_climdiv_corn_east100m.csv` against
+  `df_final_importer_corn_east100m.csv`, the notebook's filenames need
+  changing for that). Soy doesn't need its own run, its county-years and
+  weather are identical to corn's. The other two comparisons are still
+  waiting on 03a.
 - Stage 03a isn't maintained.
 
 ## notes
@@ -147,6 +150,16 @@ overwrite the paper's data. See `00_filter_east_100th_meridian/README.md`.
 - The month-level comparison notebook in stage 04 is blocked on 03a. Details,
   including where the parquet files come from and what it would take to
   bring that stage back: `03a_weather_nclimgrid_local/README.md`.
+- July 2023 precipitation in nClimGrid-Daily looks wrong. Summed over the
+  month, the daily county values come out at roughly half of NOAA's monthly
+  climdiv values across the whole country (median 49 mm against 105 mm),
+  while the other months I checked match to within rounding. Station data
+  from GHCN-Daily backs climdiv, for example Chicago O'Hare recorded 193 mm
+  that month against 58 mm in the daily data for Cook County. The problem is
+  in NOAA's own files, not in this code, and a fresh download is identical.
+  Until it's fixed, `PREC_GS` for 2023 is too low for most counties, and
+  `CHD_GS` and the precipitation extremes for that year shouldn't be
+  trusted. How to handle it in the paper is still open.
 - Environment quirks (Poetry, PATH) are documented in
   `03b_weather_nclimgrid_importer/README.md`, not repeated here.
 

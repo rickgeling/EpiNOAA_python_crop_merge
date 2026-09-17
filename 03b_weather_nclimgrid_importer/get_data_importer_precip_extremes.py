@@ -2,14 +2,14 @@
 #
 #variant of get_data_importer.py that adds precipitation-extremes metrics on top
 #of the base five (GDD, KDD, TMAX_AVG, PREC, CHD): Rx5day, CDD_1mm, CDD_2mm,
-#R10mm, R20mm — thresholds from config.DRY_DAY_THRESHOLDS_MM and
+#R10mm, R20mm, with thresholds from config.DRY_DAY_THRESHOLDS_MM and
 #config.HEAVY_RAIN_THRESHOLDS_MM.
 #
 #the base five are computed by code that is AST-identical to get_data_importer.py
 #(verified 2026-08-17), so both scripts yield the same values for them on the
 #same input. This file was called get_data_importer_paper.py until 2026-08-17;
 #renamed because the extra metrics are exploratory and are not going into the
-#paper — the paper dataset comes from the plain get_data_importer.py.
+#paper, the paper dataset comes from the plain get_data_importer.py.
 
 #--- Standard Library Imports ---
 import os
@@ -163,6 +163,7 @@ def fetch_and_clean_daily_weather_batched(
 
 
 
+#caps tavg at 29 before the base temp comes off
 def calculate_daily_gdd(tavg_series: pl.Series) -> pl.Series:
     tavg_float = tavg_series.cast(pl.Float64, strict=False) 
     capped_tavg = pl.min_horizontal(tavg_float, pl.lit(config.GDD_MAX_TEMP_C, dtype=pl.Float64))
@@ -342,15 +343,18 @@ def _calculate_seasonal_aggregates(df_season: pl.DataFrame, season_prefix: str) 
 
 def aggregate_weather_to_yearly(daily_df_for_year: pl.DataFrame, year: int) -> Dict[str, Any]:
     all_aggs: Dict[str, Any] = {"year": year} 
+    #growing season window first, 1 apr to 30 sep (see config)
     gs_start_date = pl.datetime(year, config.GS_START_MONTH, config.GS_START_DAY)
     gs_end_date = pl.datetime(year, config.GS_END_MONTH, config.GS_END_DAY)
     df_gs = daily_df_for_year.filter((pl.col("date") >= gs_start_date) & (pl.col("date") <= gs_end_date))
     gs_essential_cols = [col for col in config.TARGET_DAILY_WEATHER_VARIABLES if col != 'date']
     gs_essential_cols_present = all(col in df_gs.columns for col in gs_essential_cols)
+    #no days in the window or a variable missing, then the whole GS block is just nan
     if df_gs.height == 0 or not gs_essential_cols_present:
         gs_aggs = {f"GDD_GS": np.nan, f"KDD_GS": np.nan, f"TMAX_AVG_GS": np.nan, f"PREC_GS": np.nan, f"CHD_GS": np.nan}
     else: gs_aggs = _calculate_seasonal_aggregates(df_gs, "GS")
     all_aggs.update(gs_aggs)
+    #same again for the SGF window (jul 1 to aug 15), not used for the paper atm
     sgf_start_date = pl.datetime(year, config.SGF_START_MONTH, config.SGF_START_DAY)
     sgf_end_date = pl.datetime(year, config.SGF_END_MONTH, config.SGF_END_DAY)
     df_sgf = daily_df_for_year.filter((pl.col("date") >= sgf_start_date) & (pl.col("date") <= sgf_end_date))
@@ -394,6 +398,7 @@ def main():
     all_yearly_weather_aggregates: List[Dict[str, Any]] = []
     all_s3_load_errors_summary: Dict[str, List[Dict[str,str]]] = {} 
 
+    #one fetch per state instead of per county, way faster
     fips_by_state = defaultdict(list)
     for fips in unique_fips_to_process:
         state_fips_prefix = fips[:2]
@@ -411,6 +416,7 @@ def main():
         ).select(pl.col("year").max()).item()
         
         current_state_fetch_start_year = overall_fetch_start_year
+        #bit hacky, if a state stops before 1951 this ends up below the start year and gets skipped just below
         current_state_fetch_end_year = max(overall_fetch_start_year -1, min(overall_fetch_end_year, max_year_for_this_state_batch))
 
         if current_state_fetch_end_year < current_state_fetch_start_year:
